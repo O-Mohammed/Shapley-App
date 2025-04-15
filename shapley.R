@@ -131,7 +131,7 @@ server <- function(input, output, session) {
   output$editable_table <- renderDT({
     datatable(
       reactive_table(),
-      editable = TRUE,
+      editable = FALSE,
       options = list(
         dom = 't',
         paging = FALSE,
