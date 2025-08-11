@@ -6,6 +6,16 @@ library(ggplot2)
 library(tidyr)
 library(tibble)
 
+# ct_table_default <- tibble::tibble(
+#   Hospital = c("A", "B", "C"),
+#   `Number of machines` = c(3,2,0),
+#   `New machine cost` = c(0,0,1000000),
+#   `Maintenance per machine` = c(100000, 100000, 100000),
+#   `Utilisation cost per percent per machine` = c(4000, 4000, 4000),
+#   `Required Utilisation (percentage)` = c(255, 170, 60)
+# )
+
+
 # Define UI
 ui <- fluidPage(
   theme = shinytheme("cerulean"),
@@ -39,7 +49,9 @@ ui <- fluidPage(
       fluidRow(
         column(12,
                DTOutput("editable_table"),
-               plotOutput("ct_plot")
+               uiOutput("hospital_sliders")
+               #DTOutput("ct_debug"),
+               #plotOutput("ct_plot")
         )
       )
     )
@@ -101,6 +113,15 @@ server <- function(input, output, session) {
       theme_minimal()
   })
   
+  # Generate dynamic slider inputs based on the hospitals in ct example ----
+  # output$hospital_sliders <- renderUI({
+  #   hospitals <- reactive_table()[["Hospital"]]
+  #   lapply(hospitals, function(i) {
+  #     sliderInput(paste0("hospital", i), paste("Hospital", i),
+  #                 value = 0, min = 0, max = reactive_table()[["Max utilisation"]])
+  #   })
+  # })
+  
   # Reactive data for the editable table ----
   reactive_table <- reactiveVal(
     tibble::tibble(
@@ -112,17 +133,16 @@ server <- function(input, output, session) {
       `Required Utilisation (percentage)` = c(255, 170, 60),
       `A,B,C grouped utilisations` = c(300, 185, 0),
       `A,B grouped utilisations` = c(300, 125, 0)
-    ) 
-    |> 
+    )|> 
       dplyr::mutate(`Cost for Hospital` = 
                       (`Number of machines`*
                          `Maintenance per machine`)+
                       (`Utilisation cost per percent per machine`*
                          `Required Utilisation (percentage)`)+
-                      `New machine cost`#,
-                    #`Max utilisation` = 
-                    # `Number of machines`* 
-                    #                   100
+                      `New machine cost`,
+                    `Max utilisation` = 
+                      `Number of machines`* 
+                      100
       )
   )
   
@@ -131,7 +151,7 @@ server <- function(input, output, session) {
   output$editable_table <- renderDT({
     datatable(
       reactive_table(),
-      editable = FALSE,
+      editable = TRUE,
       options = list(
         dom = 't',
         paging = FALSE,
@@ -144,17 +164,28 @@ server <- function(input, output, session) {
   # Handle edits to the table
   observeEvent(input$editable_table_cell_edit, {
     info <- input$editable_table_cell_edit
-    table <- reactive_table()
-    table[info$row, info$col] <- info$value
-    reactive_table(table)
+    tmp_table <- reactive_table()
+    tmp_table[info$row, info$col] <- info$value
+    reactive_table(tmp_table)
+  })
+  
+  output$ct_debug <- renderDT({
+    reactive_table()
   })
   
   # CT example graph ----
   
   output$ct_plot <- renderPlot({
+    shiny::req(reactive_table())
+    
+    input_data <- reactive_table()
+    # two games 
+    # one ongoing usage cost sharing game
+    # one single payment of shared savings game
+    # the number of new machines should likely be calculated based on required utilisation 
     
     ct_input_value <- c(1320000,
-                        880000,
+                         880000,
                         1240000,
                         2200000,
                         2560000,
