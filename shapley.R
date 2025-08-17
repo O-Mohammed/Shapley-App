@@ -6,6 +6,13 @@ library(ggplot2)
 library(tidyr)
 library(tibble)
 
+safe_shapley <- function(v){
+  if(all(v ==0)){
+    0
+  } else{
+    CoopGame::shapleyValue(v)
+  }
+}
 
 generate_coalitions <- function(players) {
   n <- length(players)
@@ -52,10 +59,9 @@ ui <- fluidPage(
       fluidRow(
         column(12,
                DTOutput("editable_table"),
-               fluidRow(
-                 column(6,DTOutput("ct_coalitions_df")),
-                 column(6,plotOutput("ct_plot"))
-               )
+               DTOutput("ct_coalitions_df"),
+               plotOutput("ct_plot")
+               
         )
       )
     )
@@ -96,7 +102,7 @@ server <- function(input, output, session) {
     }
     
     coalition_values <- sapply(coalitions, function(coalition) coalition$MaxValue)
-    shapley_values <- shapleyValue(coalition_values)
+    shapley_values <- safe_shapley(coalition_values)
     
     data.frame(
       Player = paste("Player", 1:num_players),
@@ -252,7 +258,7 @@ server <- function(input, output, session) {
   # CT example graph ----
   
   output$ct_plot <- renderPlot({
-    shiny::req(ct_calculated_table())
+    shiny::req(ct_coalitions_df())
     
     input_data <- ct_coalitions_df()
     # two games 
@@ -260,12 +266,11 @@ server <- function(input, output, session) {
     # one single payment of shared savings game
     # the number of new machines should likely be calculated based on required utilisation 
     
-    cost_saving_value <- ifelse(max(abs(input_data$cost_saving_game_values)) > 0,
-                                    shapleyValue(input_data$cost_saving_game_values),
-                                    c(0,0,0))
-    cost_sharing_value <- shapleyValue(input_data$cost_sharing_game_values)
+    cost_saving_value <- safe_shapley(input_data$cost_saving_game_values)
     
-    ct_shapley_value <- cost_saving_value+cost_sharing_value 
+    cost_sharing_value <- safe_shapley(input_data$cost_sharing_game_values)
+    
+    #ct_shapley_value <- cost_saving_value+cost_sharing_value 
     
     
     hosp_group_costs <- tibble::tibble(
