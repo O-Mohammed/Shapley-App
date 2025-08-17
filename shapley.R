@@ -147,15 +147,28 @@ server <- function(input, output, session) {
   
   ct_calculated_table <- reactive({
     ct_initial_data() |> 
-      dplyr::mutate(`Cost for Hospital` = 
-                      (`Number of machines`*
+      dplyr::mutate(`Max utilisation` = 
+                      `Number of machines`* 100,
+                    
+                    `New machines required` = dplyr::if_else(
+                      `Required Utilisation (percentage)` >
+                        `Max utilisation`, 
+                      ceiling(
+                        (`Required Utilisation (percentage)`-
+                           `Max utilisation`)/
+                          100), 
+                      0),
+                    
+                    `Initial cost for Hospital` = `New machine cost`*
+                      `New machines required`,
+                    
+                    `Ongoing cost for Hospital` = 
+                      ((`Number of machines`+ 
+                          `New machines required`) *
                          `Maintenance per machine`)+
                       (`Utilisation cost per percent per machine`*
-                         `Required Utilisation (percentage)`)+
-                      `New machine cost`,
-                    `Max utilisation` = 
-                      `Number of machines`* 100
-      )
+                         `Required Utilisation (percentage)`)
+                    )
   })
   
   
@@ -197,7 +210,8 @@ server <- function(input, output, session) {
         dplyr::mutate(coalition_group = dplyr::row_number()) |> 
         unnest(cols = coalitions_tmp) |> 
         dplyr::rename("Hospital" = coalitions_tmp) |> 
-        dplyr::left_join(ct_calculated_table()) |>
+        dplyr::left_join(ct_calculated_table(),
+                         by = "Hospital") |>
         dplyr::group_by(coalition_group) |> 
         dplyr::mutate(coalition_required_utilisation = sum(`Required Utilisation (percentage)`),
                       coalition_max_utilisation = sum(`Max utilisation`),
@@ -276,12 +290,14 @@ server <- function(input, output, session) {
     hosp_group_costs <- tibble::tibble(
       tibble::tibble(
         Hospital = ct_calculated_table()$Hospital,
-        InputValue = ct_calculated_table()$`Cost for Hospital`,
+        Initial_Cost = ct_calculated_table()$`Initial cost for Hospital`,
+        Ongoing_Cost = ct_calculated_table()$`Ongoing cost for Hospital`,
         Shap1_Buy_in = cost_saving_value,
         Shap2_Ongoing = cost_sharing_value#,
         #ShapleyValue = ct_shapley_value
       )) |> 
-      pivot_longer(cols = c(InputValue, 
+      pivot_longer(cols = c(Initial_Cost,
+                            Ongoing_Cost,
                             Shap1_Buy_in,
                             Shap2_Ongoing), 
                    names_to = "Metric", 
