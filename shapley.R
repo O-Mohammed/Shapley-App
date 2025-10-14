@@ -31,7 +31,7 @@ ui <- fluidPage(
   theme = shinytheme("cerulean"),
   
   # App title
-  titlePanel("Shapely Value App"),
+  titlePanel("Shapley Value App"),
   
   # Tabs
   tabsetPanel(
