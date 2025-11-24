@@ -11,8 +11,8 @@ ui <- fluidPage(
   theme = shinytheme("cerulean"),
   
   # App title
-  titlePanel("Shapely Value App"),
-  
+  titlePanel("Shapley Value App"),
+  shiny::h5("The app is actively being built toward v0.1.0. Things may move, break, or change as development continues."),
   # Tabs
   tabsetPanel(
     
@@ -51,6 +51,7 @@ ui <- fluidPage(
 # Define Server
 server <- function(input, output, session) {
   
+  
   # Generate dynamic numeric inputs based on the number of players ----
   output$player_inputs <- renderUI({
     num_players <- input$num_players
@@ -80,6 +81,7 @@ server <- function(input, output, session) {
     }
     
     coalition_values <- sapply(coalitions, function(coalition) coalition$MaxValue)
+    shiny::req(sum(coalition_values) > 0)
     shapley_values <- shapleyValue(coalition_values)
     
     data.frame(
@@ -91,8 +93,11 @@ server <- function(input, output, session) {
   
   # Render bar chart ----
   output$bar_chart <- renderPlot({
+    shiny::req(shapley_data())
+    
     data <- shapley_data()
     data_long <- pivot_longer(data, cols = c(InputValue, ShapleyValue), names_to = "Metric", values_to = "Value")
+    
     
     ggplot(data_long, aes(x = Player, y = Value, fill = Metric)) +
       geom_bar(stat = "identity", position = "dodge") +
