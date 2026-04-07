@@ -6,6 +6,26 @@ library(ggplot2)
 library(tidyr)
 library(tibble)
 
+safe_shapley <- function(v){
+  if(all(v ==0)){
+    0
+  } else{
+    CoopGame::shapleyValue(v)
+  }
+}
+
+generate_coalitions <- function(players) {
+  n <- length(players)
+  coalitions <- unlist(
+    lapply(1:n, function(k) {
+      combn(players, k, simplify = FALSE)
+    }), 
+    recursive = FALSE
+  )
+  return(coalitions)
+}
+
+
 # Define UI
 ui <- fluidPage(
   theme = shinytheme("cerulean"),
@@ -39,7 +59,9 @@ ui <- fluidPage(
       fluidRow(
         column(12,
                DTOutput("editable_table"),
+               DTOutput("ct_coalitions_df"),
                plotOutput("ct_plot")
+               
         )
       )
     )
@@ -81,8 +103,7 @@ server <- function(input, output, session) {
     }
     
     coalition_values <- sapply(coalitions, function(coalition) coalition$MaxValue)
-    shiny::req(sum(coalition_values) > 0)
-    shapley_values <- shapleyValue(coalition_values)
+    shapley_values <- safe_shapley(coalition_values)
     
     data.frame(
       Player = paste("Player", 1:num_players),
@@ -106,78 +127,183 @@ server <- function(input, output, session) {
       theme_minimal()
   })
   
+  # Generate dynamic slider inputs based on the hospitals in ct example ----
+  # output$hospital_sliders <- renderUI({
+  #   hospitals <- reactive_table()[["Hospital"]]
+  #   lapply(hospitals, function(i) {
+  #     sliderInput(paste0("hospital", i), paste("Hospital", i),
+  #                 value = 0, min = 0, max = reactive_table()[["Max utilisation"]])
+  #   })
+  # })
+  
   # Reactive data for the editable table ----
-  reactive_table <- reactiveVal(
+  ct_initial_data <- reactiveVal(
     tibble::tibble(
       Hospital = c("A", "B", "C"),
       `Number of machines` = c(3,2,0),
       `New machine cost` = c(0,0,1000000),
       `Maintenance per machine` = c(100000, 100000, 100000),
       `Utilisation cost per percent per machine` = c(4000, 4000, 4000),
-      `Required Utilisation (percentage)` = c(255, 170, 60),
-      `A,B,C grouped utilisations` = c(300, 185, 0),
-      `A,B grouped utilisations` = c(300, 125, 0)
-    ) 
-    |> 
-      dplyr::mutate(`Cost for Hospital` = 
-                      (`Number of machines`*
+      `Required Utilisation (percentage)` = c(255, 170, 60)
+    )
+  )
+  
+  
+  ct_calculated_table <- reactive({
+    ct_initial_data() |> 
+      dplyr::mutate(`Max utilisation` = 
+                      `Number of machines`* 100,
+                    
+                    `New machines required` = dplyr::if_else(
+                      `Required Utilisation (percentage)` >
+                        `Max utilisation`, 
+                      ceiling(
+                        (`Required Utilisation (percentage)`-
+                           `Max utilisation`)/
+                          100), 
+                      0),
+                    
+                    `Initial cost for Hospital` = `New machine cost`*
+                      `New machines required`,
+                    
+                    `Ongoing cost for Hospital` = 
+                      ((`Number of machines`+ 
+                          `New machines required`) *
                          `Maintenance per machine`)+
                       (`Utilisation cost per percent per machine`*
-                         `Required Utilisation (percentage)`)+
-                      `New machine cost`#,
-                    #`Max utilisation` = 
-                    # `Number of machines`* 
-                    #                   100
-      )
-  )
+                         `Required Utilisation (percentage)`)
+                    )
+  })
+  
   
   
   # Render the editable table ----
   output$editable_table <- renderDT({
     datatable(
-      reactive_table(),
-      editable = FALSE,
+      ct_calculated_table(),
+      editable = list(target = "cell", disable = list(columns = c(7,8))),
       options = list(
         dom = 't',
         paging = FALSE,
         autoWidth = TRUE,
+        ordering = F,
         columnDefs = list(list(width = '100px', targets = "_all")) # Fix column widths
       )
     )
-  })
+  }
+  )
   
   # Handle edits to the table
   observeEvent(input$editable_table_cell_edit, {
     info <- input$editable_table_cell_edit
-    table <- reactive_table()
+    table <- ct_calculated_table()
     table[info$row, info$col] <- info$value
-    reactive_table(table)
+    ct_initial_data(table)
   })
+  
+  
+  # CT coalitions table ----
+  
+  #shiny::observe({
+    ct_coalitions_df <- shiny::reactive({
+      
+      generated_coalitions <- generate_coalitions(ct_calculated_table()$Hospital)
+      
+      tibble::tibble(coalitions = generated_coalitions,
+                     coalitions_tmp = generated_coalitions) |> 
+        dplyr::mutate(coalition_group = dplyr::row_number()) |> 
+        unnest(cols = coalitions_tmp) |> 
+        dplyr::rename("Hospital" = coalitions_tmp) |> 
+        dplyr::left_join(ct_calculated_table(),
+                         by = "Hospital") |>
+        dplyr::group_by(coalition_group) |> 
+        dplyr::mutate(coalition_required_utilisation = sum(`Required Utilisation (percentage)`),
+                      coalition_max_utilisation = sum(`Max utilisation`),
+                      current_machines = sum(`Number of machines`),
+                      new_machines_needed = dplyr::if_else(coalition_required_utilisation >
+                                                             coalition_max_utilisation,
+                                                           ceiling((coalition_required_utilisation - 
+                                                                      coalition_max_utilisation)/100),
+                                                           0),
+                      total_new_machines_cost = new_machines_needed*sum(`New machine cost`)) |> 
+        dplyr::ungroup() |> 
+        dplyr::mutate(coalitions = purrr::map_chr(coalitions, 
+                                                  ~ paste0("{", paste(.x, collapse = ", "), "}")
+        )
+        
+        ) |> 
+        dplyr::select(coalitions, 
+                      coalition_required_utilisation,
+                      coalition_max_utilisation,
+                      current_machines,
+                      new_machines_needed,
+                      `Maintenance per machine`,
+                      `Utilisation cost per percent per machine`,
+                      total_new_machines_cost) |> 
+        dplyr::distinct() |> 
+        dplyr::mutate(total_machines_needed = current_machines + new_machines_needed,
+                      total_maintenance_cost = `Maintenance per machine`*total_machines_needed,
+                      total_utilisation_cost = `Utilisation cost per percent per machine`*coalition_required_utilisation) |> 
+        dplyr::select(coalitions, 
+                      coalition_required_utilisation,
+                      coalition_max_utilisation,
+                      current_machines,
+                      new_machines_needed,
+                      `Maintenance per machine`,
+                      `Utilisation cost per percent per machine`,
+                      total_machines_needed,
+                      total_new_machines_cost,
+                      total_maintenance_cost,
+                      total_utilisation_cost) |> 
+        dplyr::mutate(cost_saving_game_values = total_new_machines_cost,
+                      cost_sharing_game_values = total_maintenance_cost + total_utilisation_cost)
+    })
+    
+  
+  
+  output$ct_coalitions_df <- renderDT({
+    datatable(ct_coalitions_df(),
+      options = list(
+      dom = 't',
+      paging = FALSE,
+      ordering = F,
+      autoWidth = TRUE)
+    )
+    
+  })
+  
   
   # CT example graph ----
   
   output$ct_plot <- renderPlot({
+    shiny::req(ct_coalitions_df())
     
-    ct_input_value <- c(1320000,
-                        880000,
-                        1240000,
-                        2200000,
-                        2560000,
-                        2120000,
-                        2440000
-    )
+    input_data <- ct_coalitions_df()
+    # two games 
+    # one ongoing usage cost sharing game
+    # one single payment of shared savings game
+    # the number of new machines should likely be calculated based on required utilisation 
     
-    ct_shapley_value <- shapleyValue(ct_input_value)
+    cost_saving_value <- safe_shapley(input_data$cost_saving_game_values)
+    
+    cost_sharing_value <- safe_shapley(input_data$cost_sharing_game_values)
+    
+    #ct_shapley_value <- cost_saving_value+cost_sharing_value 
     
     
     hosp_group_costs <- tibble::tibble(
       tibble::tibble(
-        Hospital = reactive_table()$Hospital,
-        InputValue = reactive_table()$`Cost for Hospital`,
-        ShapleyValue = ct_shapley_value
+        Hospital = ct_calculated_table()$Hospital,
+        Initial_Cost = ct_calculated_table()$`Initial cost for Hospital`,
+        Ongoing_Cost = ct_calculated_table()$`Ongoing cost for Hospital`,
+        Shap1_Buy_in = cost_saving_value,
+        Shap2_Ongoing = cost_sharing_value#,
+        #ShapleyValue = ct_shapley_value
       )) |> 
-      pivot_longer(cols = c(InputValue, 
-                            ShapleyValue), 
+      pivot_longer(cols = c(Initial_Cost,
+                            Ongoing_Cost,
+                            Shap1_Buy_in,
+                            Shap2_Ongoing), 
                    names_to = "Metric", 
                    values_to = "Value")
     
